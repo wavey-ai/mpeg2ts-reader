@@ -18,6 +18,9 @@ encoding_rs = "0.8"
 log = "0.4"
 smptera-format-identifiers-rust = "0.4.0"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 [dev-dependencies]
 assert_matches = "1.5.0"
 bitstream-io = "2.2"

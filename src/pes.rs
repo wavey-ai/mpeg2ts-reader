@@ -149,6 +149,14 @@ where
             }
         }
     }
+
+    fn flush(&mut self, ctx: &mut Self::Ctx) {
+        if self.state == PesState::Started {
+            self.stream_consumer.end_packet(ctx);
+        }
+        self.state = PesState::Begin;
+        self.ccounter = None;
+    }
 }
 
 /// Type for the length of a PES packet
@@ -1306,6 +1314,7 @@ mod test {
         start_stream_called: bool,
         begin_packet_called: bool,
         continuity_error_called: bool,
+        ended_packets: usize,
     }
     impl MockState {
         fn new() -> MockState {
@@ -1313,6 +1322,7 @@ mod test {
                 start_stream_called: false,
                 begin_packet_called: false,
                 continuity_error_called: false,
+                ended_packets: 0,
             }
         }
     }
@@ -1332,7 +1342,9 @@ mod test {
             self.state.borrow_mut().begin_packet_called = true;
         }
         fn continue_packet(&mut self, _ctx: &mut NullDemuxContext, _data: &[u8]) {}
-        fn end_packet(&mut self, _ctx: &mut NullDemuxContext) {}
+        fn end_packet(&mut self, _ctx: &mut NullDemuxContext) {
+            self.state.borrow_mut().ended_packets += 1;
+        }
         fn continuity_error(&mut self, _ctx: &mut NullDemuxContext) {
             self.state.borrow_mut().continuity_error_called = true;
         }
@@ -1361,6 +1373,23 @@ mod test {
             let state = state.borrow();
             assert!(state.continuity_error_called);
         }
+    }
+
+    #[test]
+    fn flush_finishes_the_last_started_pes_packet_once() {
+        let state = std::rc::Rc::new(std::cell::RefCell::new(MockState::new()));
+        let mock = MockElementaryStreamConsumer::new(state.clone());
+        let mut pes_filter = pes::PesPacketFilter::new(mock);
+        let buf = hex!("4741F510000001E0000084C00A355DDD11B1155DDBF5910000000109100000000167640029AD843FFFC21FFFE10FFFF087FFF843FFFC21FFFE10FFFFFFFFFFFFFFFF087FFFFFFFFFFFFFFF2CC501E0113F780A1010101F00000303E80000C350940000000168FF3CB0000001060001C006018401103A0408D2BA80000050204E95D400000302040AB500314454473141FEFF53040000C815540DF04F77FFFFFFFFFFFFFFFFFFFF80000000016588800005DB001008673FC365F48EAE");
+        let packet = packet::Packet::new(&buf);
+        let mut ctx = NullDemuxContext::new();
+
+        pes_filter.consume(&mut ctx, &packet);
+        pes_filter.flush(&mut ctx);
+        assert_eq!(state.borrow().ended_packets, 1);
+
+        pes_filter.flush(&mut ctx);
+        assert_eq!(state.borrow().ended_packets, 1);
     }
 
     #[test]

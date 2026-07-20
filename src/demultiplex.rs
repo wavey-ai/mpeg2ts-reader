@@ -34,6 +34,9 @@ pub trait PacketFilter {
 
     /// Implements filter-specific packet processing logic.
     fn consume(&mut self, ctx: &mut Self::Ctx, pk: &packet::Packet<'_>);
+
+    /// Finish any packet or section buffered at the end of an input stream.
+    fn flush(&mut self, _ctx: &mut Self::Ctx) {}
 }
 
 /// No-op implementation of `PacketFilter`.
@@ -152,6 +155,11 @@ macro_rules! packet_filter_switch {
 
                 }
             }
+            fn flush(&mut self, ctx: &mut $ctx) {
+                match self {
+                    $( &mut $name::$case_name(ref mut f) => f.flush(ctx), )*
+                }
+            }
         }
     }
 }
@@ -196,6 +204,12 @@ impl<F: PacketFilter> Filters<F> {
     pub fn remove(&mut self, pid: packet::Pid) {
         if usize::from(pid) < self.filters_by_pid.len() {
             self.filters_by_pid[usize::from(pid)] = None;
+        }
+    }
+
+    fn flush(&mut self, ctx: &mut F::Ctx) {
+        for filter in self.filters_by_pid.iter_mut().flatten() {
+            filter.flush(ctx);
         }
     }
 }
@@ -670,6 +684,18 @@ impl<Ctx: DemuxContext> Demultiplex<Ctx> {
             } else {
                 break 'outer;
             };
+        }
+    }
+
+    /// Finish packets buffered by stream filters at end of input.
+    ///
+    /// A video PES packet may be unbounded and therefore ends only when the
+    /// next payload-unit start is observed. Calling `flush` ensures the final
+    /// packet is delivered even when no subsequent transport packet exists.
+    pub fn flush(&mut self, ctx: &mut Ctx) {
+        self.processor_by_pid.flush(ctx);
+        if !ctx.filter_changeset().is_empty() {
+            ctx.filter_changeset().apply(&mut self.processor_by_pid);
         }
     }
 
